@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Poe链接对话提取器</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .input-section {
+            margin-bottom: 30px;
+        }
+        textarea {
+            width: 100%;
+            min-height: 150px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            resize: vertical;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .results {
+            margin-top: 30px;
+        }
+        .link-item {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            background-color: #fafafa;
+        }
+        .link-header {
+            font-weight: bold;
+            color: #007bff;
+            margin-bottom: 10px;
+            font-size: 14px;
+            word-break: break-all;
+        }
+        .conversation-content {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .loading {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+        .error {
+            color: #dc3545;
+            background-color: #f8d7da;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #d4edda;
+            color: #155724;
+            border-radius: 5px;
+        }
+        .copy-button {
+            background-color: #28a745;
+            font-size: 14px;
+            padding: 8px 16px;
+            margin: 5px 0;
+        }
+        .copy-button:hover {
+            background-color: #1e7e34;
+        }
+        .controls {
+            margin: 10px 0;
+            text-align: right;
+        }
+        .all-content {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Poe链接对话提取器</h1>
+        
+        <div class="input-section">
+            <label for="textInput"><strong>输入包含Poe链接的文本：</strong></label>
+            <textarea id="textInput" placeholder="在此粘贴包含Poe链接的文本...
+例如：https://poe.com/s/mSTPv0RAs9y641VBu94F
+可以包含多个链接，每行一个或用空格分隔"></textarea>
+            <br>
+            <button onclick="extractAndFetch()">提取并获取对话</button>
+            <button onclick="clearResults()">清空结果</button>
+            <button onclick="copyAllContent()" id="copyAllBtn" style="display: none;" class="copy-button">复制所有内容</button>
+        </div>
+
+        <div id="status" class="status" style="display: none;"></div>
+        <div id="results" class="results"></div>
+        
+        <div id="allContent" class="all-content" style="display: none;">
+            <h3>所有内容汇总</h3>
+            <textarea id="allContentText" readonly style="width: 100%; height: 300px; font-family: monospace;"></textarea>
+            <div class="controls">
+                <button onclick="copyAllText()" class="copy-button">复制所有内容</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 提取Poe链接的正则表达式
+        function extractPoeLinks(text) {
+            const poeRegex = /https:\/\/poe\.com\/s\/[a-zA-Z0-9]+/g;
+            const matches = text.match(poeRegex);
+            return matches ? [...new Set(matches)] : [];
+        }
+
+        // 优化获取Poe对话内容
+        async function fetchPoeConversation(url) {
+            try {
+                const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
+                const response = await fetch(proxyUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP错误! 状态: ${response.status}`);
+                }
+                
+                const html = await response.text();
+                
+                // 使用更精确的选择器提取对话内容
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                
+                let conversationText = '';
+                
+                // 优先查找对话消息
+                const messageSelectors = [
+                    '[data-testid*="message"]',
+                    '[class*="Message_message"]',
+                    '[class*="ChatMessage_message"]',
+                    '.markdown',
+                    '[class*="message"]'
+                ];
+                
+                // 查找消息内容
+                let foundMessages = false;
+                for (const selector of messageSelectors) {
+                    const messages = doc.querySelectorAll(selector);
+                    if (messages.length > 0) {
+                        const uniqueMessages = [];
+                        const seenTexts = new Set();
+                        
+                        messages.forEach(el => {
+                            const text = el.textContent.trim();
+                            if (text && text.length > 20 && !seenTexts.has(text)) {
+                                seenTexts.add(text);
+                                uniqueMessages.push(text);
+                            }
+                        });
+                        
+                        if (uniqueMessages.length > 0) {
+                            conversationText = uniqueMessages.join('\n\n---\n\n');
+                            foundMessages = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // 如果没找到消息，尝试提取主要内容
+                if (!foundMessages) {
+                    // 移除脚本和样式
+                    const scripts = doc.querySelectorAll('script, style, nav, footer, header');
+                    scripts.forEach(el => el.remove());
+                    
+                    const mainContent = doc.querySelector('main, article, [role="main"], .main-content') || doc.body;
+                    if (mainContent) {
+                        const textNodes = Array.from(mainContent.querySelectorAll('*'))
+                            .map(el => el.textContent.trim())
+                            .filter(text => text.length > 30 && text.length < 500)
+                            .filter(text => !text.includes('function') && !text.includes('var '))
+                            .slice(0, 20);
+                        
+                        if (textNodes.length > 0) {
+                            conversationText = textNodes.join('\n\n---\n\n');
+                        } else {
+                            conversationText = '提取到页面内容，但可能不是对话内容';
+                        }
+                    }
+                }
+                
+                return {
+                    url: url,
+                    content: conversationText || '未能提取到有效对话内容',
+                    success: true,
+                    rawLength: html.length
+                };
+                
+            } catch (error) {
+                return {
+                    url: url,
+                    content: `获取内容失败: ${error.message}`,
+                    success: false,
+                    error: error.message
+                };
+            }
+        }
+
+        // 复制功能
+        async function copyToClipboard(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+                return true;
+            } catch (err) {
+                // 备用方案
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    return true;
+                } catch (err) {
+                    return false;
+                } finally {
+                    document.body.removeChild(textArea);
+                }
+            }
+        }
+
+        // 复制所有内容
+        async function copyAllContent() {
+            const allText = document.getElementById('allContentText').value;
+            if (!allText) return;
+            
+            const success = await copyToClipboard(allText);
+            const btn = document.querySelector('.copy-button');
+            const originalText = btn.textContent;
+            btn.textContent = success ? '已复制!' : '复制失败';
+            btn.style.backgroundColor = success ? '#28a745' : '#dc3545';
+            
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.style.backgroundColor = '#28a745';
+            }, 2000);
+        }
+
+        // 复制汇总内容
+        async function copyAllText() {
+            const allText = document.getElementById('allContentText').value;
+            const success = await copyToClipboard(allText);
+            
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = success ? '已复制!' : '复制失败';
+            
+            setTimeout(() => {
+                btn.textContent = originalText;
+            }, 2000);
+        }
+
+        // 主函数：提取链接并获取对话
+        async function extractAndFetch() {
+            const input = document.getElementById('textInput').value;
+            const resultsDiv = document.getElementById('results');
+            const statusDiv = document.getElementById('status');
+            const copyAllBtn = document.getElementById('copyAllBtn');
+            const allContentDiv = document.getElementById('allContent');
+            const allContentText = document.getElementById('allContentText');
+            
+            if (!input.trim()) {
+                alert('请输入包含Poe链接的文本！');
+                return;
+            }
+            
+            const links = extractPoeLinks(input);
+            if (links.length === 0) {
+                alert('未找到有效的Poe链接！');
+                return;
+            }
+            
+            // 显示状态
+            statusDiv.style.display = 'block';
+            statusDiv.innerHTML = `找到 ${links.length} 个Poe链接，正在获取对话内容...`;
+            statusDiv.className = 'status';
+            
+            // 清空之前的结果
+            resultsDiv.innerHTML = '';
+            allContentText.value = '';
+            copyAllBtn.style.display = 'none';
+            allContentDiv.style.display = 'none';
+            
+            // 禁用按钮
+            const buttons = document.querySelectorAll('button');
+            buttons.forEach(btn => btn.disabled = true);
+            
+            let allResults = [];
+            
+            try {
+                // 逐个获取对话内容
+                for (let i = 0; i < links.length; i++) {
+                    const link = links[i];
+                    statusDiv.innerHTML = `正在获取第 ${i + 1}/${links.length} 个链接的内容...`;
+                    
+                    const result = await fetchPoeConversation(link);
+                    allResults.push(result);
+                    
+                    // 创建结果显示
+                    const linkItem = document.createElement('div');
+                    linkItem.className = 'link-item';
+                    linkItem.innerHTML = `
+                        <div class="link-header">链接 ${i + 1}: ${link}</div>
+                        <div class="controls">
+                            <button class="copy-button" onclick="copyToClipboard(this.parentNode.nextElementSibling.textContent)">复制此内容</button>
+                        </div>
+                        <div class="conversation-content">${result.content}</div>
+                    `;
+                    
+                    if (!result.success) {
+                        linkItem.querySelector('.conversation-content').classList.add('error');
+                    }
+                    
+                    resultsDiv.appendChild(linkItem);
+                }
+                
+                // 生成汇总内容
+                let summaryContent = `Poe链接对话提取结果汇总\n`;
+                summaryContent += `==================\n\n`;
+                summaryContent += `共处理 ${links.length} 个链接\n\n`;
+                
+                allResults.forEach((result, index) => {
+                    summaryContent += `链接 ${index + 1}: ${result.url}\n`;
+                    summaryContent += `状态: ${result.success ? '成功' : '失败'}\n`;
+                    if (result.success) {
+                        summaryContent += `内容长度: ${result.content.length} 字符\n`;
+                    }
+                    summaryContent += `\n${result.content}\n`;
+                    summaryContent += `\n${'='.repeat(50)}\n\n`;
+                });
+                
+                allContentText.value = summaryContent;
+                allContentDiv.style.display = 'block';
+                copyAllBtn.style.display = 'inline-block';
+                
+                statusDiv.innerHTML = `完成！成功获取了 ${links.length} 个链接的对话内容。`;
+                statusDiv.className = 'status';
+                
+            } catch (error) {
+                statusDiv.innerHTML = `发生错误: ${error.message}`;
+                statusDiv.className = 'status error';
+            } finally {
+                // 重新启用按钮
+                buttons.forEach(btn => btn.disabled = false);
+            }
+        }
+
+        // 清空结果
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+            document.getElementById('status').style.display = 'none';
+            document.getElementById('textInput').value = '';
+            document.getElementById('allContent').style.display = 'none';
+            document.getElementById('copyAllBtn').style.display = 'none';
+        }
+
+        // 添加回车键快捷功能
+        document.getElementById('textInput').addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.key === 'Enter') {
+                extractAndFetch();
+            }
+        });
+    </script>
+</body>
+</html>
